@@ -1,0 +1,18 @@
+<html>
+	<head>
+		<script>
+			document.on("click","#my_click", function(evt, el) {
+				document.$("#messages").append("<p>CLICK!</p>");
+			});
+			document.on("dblclick","#my_click", function(evt, el) {
+				document.$("#messages").append("<p>DOUBLE CLICK!</p>");
+			});
+		</script>
+	</head>
+	<body>
+		<a href="#" #my_click>Hello world!!</a>
+		<div #messages>
+			<p>Messages here: </p>
+		</div>
+	</body>
+</html>
