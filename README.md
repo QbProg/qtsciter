@@ -1,14 +1,14 @@
 **Qt Sciter**
 
 A ready to use example to embed sciter lite as a Qt6 Widget.
-*work in progress*
-**consider this an example, not a complete library**
 
-** Notes **
+**Please consider this an example, not a complete library**
+
+Notes:
 - Works with Qt6 + Visual Studio 2022 x64 + CMake
 - sciter usage is private, so no sciter dependencies are exposed
-- Uses raster skia rendering to a QImage before painting on screen
-- QCursor and keyboard handling TODO
+- Uses raster skia offline rendering, bridged to Qt using QImage+QPainter
+- QCursor and keyboard support
 
 **Instructions**
 
