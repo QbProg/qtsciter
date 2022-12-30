@@ -9,6 +9,9 @@
 #include "sciter-x.h"
 #include "sciter-x-behavior.h"
 #include "sciter-x-dom.h"
+#include "sciter-x-key-codes.h"
+
+static UINT SC_CALLBACK handle_notification(LPSCITER_CALLBACK_NOTIFICATION pnm, LPVOID callbackParam);
 
 QSciter::QSciter(QWidget * parent)
 	: QWidget(parent)
@@ -19,9 +22,9 @@ QSciter::QSciter(QWidget * parent)
 	createSciterWindow();
 
 	setMouseTracking(true);
-
+	
 	connect(&eventTimer, &QTimer::timeout, this, &QSciter::onTimerEvent);
-	eventTimer.setInterval(5);
+	eventTimer.setInterval(10);
 	eventTimer.start();
 }
 
@@ -46,7 +49,9 @@ void QSciter::createSciterWindow()
 		SciterSetOption(NULL, SCITER_SET_DEBUG_MODE, TRUE);
 #endif
 
-	auto ok = SciterProcX(sciterHandle, SCITER_X_MSG_CREATE(GFX_LAYER_SKIA_RASTER, FALSE));
+	SciterProcX(sciterHandle, SCITER_X_MSG_CREATE(GFX_LAYER_SKIA_RASTER, FALSE));
+
+	SciterSetCallback(sciterHandle, handle_notification, this);
 }
 
 QSciter::~QSciter()
@@ -55,7 +60,10 @@ QSciter::~QSciter()
 	eventTimer.stop();
 
 	if (sciterHandle != nullptr)
+	{
+		SciterSetCallback(sciterHandle, NULL, NULL);
 		SciterProcX(sciterHandle, SCITER_X_MSG_DESTROY());
+	}
 		
 	sciterHandle = nullptr;
 #endif
@@ -93,13 +101,21 @@ void QSciter::paintEvent(QPaintEvent * resevent)
 	paint.targetType = SPT_RECEIVER;
 	paint.target.receiver.param = &painter;
 	paint.target.receiver.callback = on_bitmap;
-	auto ok = SciterProcX(sciterHandle, paint);
+	SciterProcX(sciterHandle, paint);
 }
 
 template<class T>
 MOUSE_BUTTONS getMouseButtons(T * event)
 {
 	unsigned mb = 0;
+
+	if (event->button() == Qt::LeftButton)
+		mb |= MAIN_MOUSE_BUTTON;
+	else if (event->button() == Qt::RightButton)
+		mb |= PROP_MOUSE_BUTTON;
+	else if (event->button() == Qt::MiddleButton)
+		mb |= MIDDLE_MOUSE_BUTTON;
+
 	if (event->buttons().testFlag(Qt::RightButton))
 		mb |= PROP_MOUSE_BUTTON;
 	if (event->buttons().testFlag(Qt::LeftButton))
@@ -128,15 +144,8 @@ void QSciter::mousePressEvent(QMouseEvent * event)
 	if (sciterHandle != nullptr)
 	{
 		MOUSE_EVENTS evt = MOUSE_EVENTS::MOUSE_DOWN;
-		POINT pos = { event->x(), event->y() };
+		POINT pos = { LONG(event->position().x()), LONG(event->position().y())};
 		SciterProcX(sciterHandle, SCITER_X_MSG_MOUSE(evt, getMouseButtons(event), getKeyboardStates(event), pos));
-
-		// @this makes click work but not double click
-#if 0
-		// @todo not clear
-		evt = MOUSE_EVENTS::MOUSE_UP;
-		SciterProcX(sciterHandle, SCITER_X_MSG_MOUSE(evt, getMouseButtons(event), getKeyboardStates(event), pos));
-#endif
 	}
 
 	update();
@@ -149,7 +158,7 @@ void QSciter::mouseReleaseEvent(QMouseEvent * event)
 	if (sciterHandle != nullptr)
 	{
 		MOUSE_EVENTS evt = MOUSE_EVENTS::MOUSE_UP;
-		POINT pos = { event->x(), event->y() };
+		POINT pos = { LONG(event->position().x()), LONG(event->position().y()) };
 		SciterProcX(sciterHandle, SCITER_X_MSG_MOUSE(evt, getMouseButtons(event), getKeyboardStates(event), pos));
 
 		update();
@@ -163,7 +172,7 @@ void QSciter::mouseDoubleClickEvent(QMouseEvent * event)
 	if (sciterHandle != nullptr)
 	{
 		MOUSE_EVENTS evt = MOUSE_EVENTS::MOUSE_DCLICK;
-		POINT pos = { event->x(), event->y() };
+		POINT pos = { LONG(event->position().x()), LONG(event->position().y()) };
 		SciterProcX(sciterHandle, SCITER_X_MSG_MOUSE(evt, getMouseButtons(event), getKeyboardStates(event), pos));
 
 		update();
@@ -177,7 +186,7 @@ void QSciter::mouseMoveEvent(QMouseEvent * event)
 	if (sciterHandle != nullptr)
 	{
 		MOUSE_EVENTS evt = MOUSE_EVENTS::MOUSE_MOVE;
-		POINT pos = { event->x(), event->y() };
+		POINT pos = { LONG(event->position().x()), LONG(event->position().y()) };
 		SciterProcX(sciterHandle, SCITER_X_MSG_MOUSE(evt, getMouseButtons(event), getKeyboardStates(event), pos));
 	}
 }
@@ -199,17 +208,99 @@ void QSciter::wheelEvent(QWheelEvent * event)
 	update();
 }
 
+unsigned int QSciter::translateKey(int vk, quint32 nativeKeycode)
+{
+#ifdef WIN32
+	if (nativeKeycode == VK_RSHIFT)
+		return SC_KB_CODES::KB_RIGHT_SHIFT;
+	else if (nativeKeycode == VK_SHIFT)
+		return SC_KB_CODES::KB_LEFT_SHIFT;
+	else if (nativeKeycode == VK_RCONTROL)
+		return SC_KB_CODES::KB_RIGHT_CONTROL;
+	else if (nativeKeycode == VK_CONTROL)
+		return SC_KB_CODES::KB_LEFT_CONTROL;
+	else if (nativeKeycode == VK_NAVIGATION_MENU)
+		return SC_KB_CODES::KB_CONTEXT_MENU;
+#endif
+
+	switch (vk)
+	{
+	case Qt::Key::Key_Escape: return SC_KB_CODES::KB_ESCAPE;
+	case Qt::Key::Key_Enter: return SC_KB_CODES::KB_KP_ENTER;
+	case Qt::Key::Key_Return: return SC_KB_CODES::KB_ENTER;
+	case Qt::Key::Key_Tab:    return SC_KB_CODES::KB_TAB;
+	case Qt::Key::Key_Backspace:   return SC_KB_CODES::KB_BACKSPACE;
+	case Qt::Key::Key_Insert:  return SC_KB_CODES::KB_INSERT;
+	case Qt::Key::Key_Delete:  return SC_KB_CODES::KB_DELETE;
+	case Qt::Key::Key_Right:  return SC_KB_CODES::KB_RIGHT;
+	case Qt::Key::Key_Left:  return SC_KB_CODES::KB_LEFT;
+	case Qt::Key::Key_Down:  return SC_KB_CODES::KB_DOWN;
+	case Qt::Key::Key_Up:  return SC_KB_CODES::KB_UP;
+	case Qt::Key::Key_PageUp:  return SC_KB_CODES::KB_PAGE_UP;
+	case Qt::Key::Key_PageDown:  return SC_KB_CODES::KB_PAGE_DOWN;
+	case Qt::Key::Key_Home:  return SC_KB_CODES::KB_HOME;
+	case Qt::Key::Key_End:  return SC_KB_CODES::KB_END;
+	case Qt::Key::Key_CapsLock:  return SC_KB_CODES::KB_CAPS_LOCK;
+	case Qt::Key::Key_ScrollLock:  return SC_KB_CODES::KB_SCROLL_LOCK;
+	case Qt::Key::Key_NumLock:  return SC_KB_CODES::KB_NUM_LOCK;
+	case Qt::Key::Key_Print:  return SC_KB_CODES::KB_PRINT_SCREEN;
+	case Qt::Key::Key_Pause:  return SC_KB_CODES::KB_PAUSE;
+
+	case Qt::Key::Key_F1:  return SC_KB_CODES::KB_F1;
+	case Qt::Key::Key_F2:  return SC_KB_CODES::KB_F2;
+	case Qt::Key::Key_F3:  return SC_KB_CODES::KB_F3;
+	case Qt::Key::Key_F4:  return SC_KB_CODES::KB_F4;
+	case Qt::Key::Key_F5:  return SC_KB_CODES::KB_F5;
+	case Qt::Key::Key_F6:  return SC_KB_CODES::KB_F6;
+	case Qt::Key::Key_F7:  return SC_KB_CODES::KB_F7;
+	case Qt::Key::Key_F8:  return SC_KB_CODES::KB_F8;
+	case Qt::Key::Key_F9:  return SC_KB_CODES::KB_F9;
+	case Qt::Key::Key_F10:  return SC_KB_CODES::KB_F10;
+	case Qt::Key::Key_F11:  return SC_KB_CODES::KB_F11;
+	case Qt::Key::Key_F12:  return SC_KB_CODES::KB_F12;
+	
+	case Qt::Key::Key_F13:  return SC_KB_CODES::KB_F13;
+	case Qt::Key::Key_F14:  return SC_KB_CODES::KB_F14;
+	case Qt::Key::Key_F15:  return SC_KB_CODES::KB_F15;
+	case Qt::Key::Key_F16:  return SC_KB_CODES::KB_F16;
+	case Qt::Key::Key_F17:  return SC_KB_CODES::KB_F17;
+	case Qt::Key::Key_F18:  return SC_KB_CODES::KB_F18;
+	case Qt::Key::Key_F19:  return SC_KB_CODES::KB_F19;
+	case Qt::Key::Key_F20:  return SC_KB_CODES::KB_F20;
+	case Qt::Key::Key_F21:  return SC_KB_CODES::KB_F21;
+	case Qt::Key::Key_F22:  return SC_KB_CODES::KB_F22;
+	case Qt::Key::Key_F23:  return SC_KB_CODES::KB_F23;
+	case Qt::Key::Key_F24:  return SC_KB_CODES::KB_F24;
+	case Qt::Key::Key_F25:  return SC_KB_CODES::KB_F25;
+
+	case Qt::Key::Key_Shift: return SC_KB_CODES::KB_LEFT_SHIFT;
+	case Qt::Key::Key_Alt: return SC_KB_CODES::KB_LEFT_ALT;
+	case Qt::Key::Key_AltGr: return SC_KB_CODES::KB_RIGHT_ALT;
+	case Qt::Key::Key_Menu: return SC_KB_CODES::KB_MENU;
+	}
+	
+	return UINT(vk);
+}
+
 void QSciter::keyPressEvent(QKeyEvent * event)
 {
 	if (sciterHandle != nullptr)
 	{
-#if 0 // @todo! need to translate keys
 		KEY_EVENTS evt = KEY_EVENTS::KEY_DOWN;
-		UINT code = event->key();
+		UINT code = translateKey(event->key(), event->nativeVirtualKey());
 		SciterProcX(sciterHandle, SCITER_X_MSG_KEY(evt, code, getKeyboardStates(event)));
-#endif
+
+		if (!event->text().isEmpty())
+		{
+			for (QChar c : event->text())
+			{
+				KEY_EVENTS me = KEY_CHAR;
+				SciterProcX(sciterHandle, SCITER_X_MSG_KEY(me, c.unicode(), KEYBOARD_STATES(0)));
+			}
+		}
 	}
 	QWidget::keyPressEvent(event);
+	update();
 }
 
 void QSciter::keyReleaseEvent(QKeyEvent * event)
@@ -217,10 +308,12 @@ void QSciter::keyReleaseEvent(QKeyEvent * event)
 	if (sciterHandle != nullptr)
 	{
 		KEY_EVENTS evt = KEY_EVENTS::KEY_UP;
-		UINT code = event->key();
+		UINT code = translateKey(event->key(), event->nativeVirtualKey());
 		SciterProcX(sciterHandle, SCITER_X_MSG_KEY(evt, code, getKeyboardStates(event)));
 	}
-	QWidget::keyPressEvent(event);
+
+	QWidget::keyReleaseEvent(event);
+	update();
 }
 
 void QSciter::focusInEvent(QFocusEvent * event)
@@ -245,7 +338,7 @@ void QSciter::enterEvent(QEnterEvent * event)
 	if (sciterHandle != nullptr)
 	{
 		MOUSE_EVENTS evt = MOUSE_EVENTS::MOUSE_ENTER;
-		POINT pos = { event->x(), event->y() };
+		POINT pos = { LONG(event->position().x()), LONG(event->position().y()) };
 		SciterProcX(sciterHandle, SCITER_X_MSG_MOUSE(evt, getMouseButtons(event), getKeyboardStates(event), pos));
 	}
 	QWidget::enterEvent(event);
@@ -262,10 +355,39 @@ void QSciter::leaveEvent(QEvent * event)
 	QWidget::leaveEvent(event);
 }
 
-
-QSize QSciter::sizeHint() const
+UINT SC_CALLBACK handle_notification(LPSCITER_CALLBACK_NOTIFICATION pnm, LPVOID callbackParam)
 {
-	return QSize(800, 600);
+	QSciter* self = (QSciter*)(callbackParam);
+	return self->handleNotification(pnm);
+}
+
+unsigned int QSciter::handleNotification(LPSCITER_CALLBACK_NOTIFICATION pnm)
+{
+	// Crack and call appropriate method
+	// here are all notifiactions
+	switch (pnm->code) {
+	case SC_INVALIDATE_RECT: this->update(); break;
+	case SC_SET_CURSOR: this->setSciterCursor((LPSCN_SET_CURSOR)pnm);
+	}
+	return 0;
+}
+
+void QSciter::setSciterCursor(LPSCN_SET_CURSOR pnm)
+{
+	Qt::CursorShape cursor = Qt::CursorShape::ArrowCursor;
+	switch (pnm->cursorId)
+	{
+	case CURSOR_ARROW:  break;
+	case CURSOR_IBEAM:  cursor = Qt::CursorShape::IBeamCursor; break;
+	case CURSOR_CROSS:  cursor = Qt::CursorShape::CrossCursor; break;
+	case CURSOR_HAND:   cursor = Qt::CursorShape::PointingHandCursor; break;
+	case CURSOR_SIZEWE: cursor = Qt::CursorShape::SizeBDiagCursor; break;
+	case CURSOR_SIZENS: cursor = Qt::CursorShape::SizeFDiagCursor; break;
+	default:
+		int a; a = 0;
+		break;
+	}
+	this->setCursor(cursor);
 }
 
 void QSciter::onTimerEvent()
